@@ -1,0 +1,102 @@
+# import all necessary packages
+import requests
+import json
+from bs4 import BeautifulSoup
+import nltk
+import statistics
+from nltk.tokenize import word_tokenize
+import pandas as pd
+from scipy.stats.stats import pearsonr
+%matplotlib inline
+import matplotlib.pyplot as plt
+plt.style.use('seaborn-whitegrid')
+import numpy as np
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+
+
+nltk.download('vader_lexicon')
+vader = SentimentIntensityAnalyzer()
+
+# API request
+url = "https://ebay-data-scraper.p.rapidapi.com/products"
+
+#in querystring specify string for product you want to search and country you're interested in
+
+querystring = {"page_number":"5","product_name":"smartphone","country":"canada"}
+
+headers = {
+	"X-RapidAPI-Key": "YOUR KEY",
+	"X-RapidAPI-Host": "ebay-data-scraper.p.rapidapi.com"
+}
+
+response = requests.request("GET", url, headers=headers, params=querystring)
+
+data = response.json()
+
+# save raw data for you
+with open('ebay_data.jl', 'w') as file:
+    for line in data:
+        file.write( json.dumps(line) + '\n' )
+        
+# Open the data
+with open('ebay_data.jl', 'r') as file:
+    data = [ json.loads(line) for line in file.readlines() ]
+
+# Getting the names (not really necessary, but why not) and the product prices
+temp_output = []
+for datum in range(len(data)):
+    temp_dict = {}
+    if "reviews" in data[datum]:
+      temp_dict["Name"] = data[datum]["name"]
+      temp_dict["Price"] = data[datum]["price"]
+      
+      temp_dict["Url"] = data[datum]["reviews"]
+    else:
+      continue  
+    temp_output.append(temp_dict)
+
+# There are letters, comas and $ in the price strings, I'm getting rid of those. 
+# The specific letters are different for each currency so you need to check first for the currency symbols
+for item in temp_output:
+    item["Price"] = item["Price"].replace("$", "")
+    item["Price"] = item["Price"].replace("C", "")
+    item["Price"] = item["Price"].replace("to", "")
+    item["Price"] = item["Price"].replace(",", "")
+
+# Some prices are ranges. For the purpose of this project I will use means of the two prices
+# First split them prices
+for item in temp_output:
+    item["Price"] = item["Price"].split()
+
+#Second mean them and convert to integers
+for product in range(len(temp_output)):
+    if len(temp_output[product]["Price"]) == 1:
+        temp_output[product]["Price"] = float(temp_output[product]["Price"][0])
+    else:
+        temp_output[product]["Price"] = (float(temp_output[product]["Price"][0]) + float(temp_output[product]["Price"][1]))/2
+
+
+for product in range(len(temp_output)):
+  url = temp_output[product]["Url"]
+  response = requests.get(url)
+  soup = BeautifulSoup(response.content, 'html.parser')
+  reviews = soup.select('p.review--content')
+  reviews_list = []
+  for review in reviews:
+      reviews_list.append(review.text)
+  sentiments = []
+  for review in reviews_list:
+    sentiments.append(vader.polarity_scores(review)['compound'])
+
+  if len(sentiments)!= 0:
+    sentiment = sum(sentiments) / len(sentiments)
+  else:
+    sentiment = 0
+  temp_output[product]["Sentiment"] = sentiment
+
+prices = [d['Price'] for d in output]
+sentiments = [d['Sentiment'] for d in output]
+
+pearsonr(prices, sentiments)
+
+plt.plot(sentiments,prices, "o", color = "black")
